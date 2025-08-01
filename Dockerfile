@@ -4,6 +4,9 @@ WORKDIR /code
 
 RUN install2.r --error \
     shiny \
+    shinydashboard \
+    shinyjs \
+    DT \
     dplyr \
     ggplot2 \
     readr \
@@ -15,7 +18,11 @@ RUN install2.r --error \
     readr \
     purrr \
     harmony \
-    scales
+    scales \
+    tools \
+    jsonlite \
+    cookies \
+    digest
 
     
 COPY . .
