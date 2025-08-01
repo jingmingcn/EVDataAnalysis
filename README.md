@@ -12,5 +12,6 @@ Check out the configuration reference at https://huggingface.co/docs/hub/spaces-
 
 How to build and run?
 
-docker build -p .
-docker run -d -p 7860:7860 <id>
+docker build -t evdataanalysis:lastest .
+
+docker run -d -p 7860:7860 <image_id>
