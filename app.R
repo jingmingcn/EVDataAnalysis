@@ -4,40 +4,57 @@ library(DT)
 library(ggplot2)
 library(dplyr)
 library(tools)
-library(jsonlite)  # Add this with other library imports
+library(jsonlite)
 library(shinyjs)
 library(cookies)
+library(promises)
+library(future)
+library(progressr)
+library(data.table)
+library(tidyr)
+library(stringr)
+library(Matrix)
+# library(scales)
+library(FlowSOM)
+library(flowCore)
+library(ConsensusClusterPlus)
+library(Rtsne)
+library(umap)
+library(RColorBrewer)
+library(Biobase)
+library(reshape2)
+library(uuid)
+# Configure future to use multisession
+plan(multisession)
 
 # Set max file upload size to 30MB
 options(shiny.maxRequestSize = 30*1024^2)
 
 # Source analysis function
+source("generate_evisualizer_json.R")
 source("evAnalysis.R")
 source("sessionManager.R")
+source("getServerLoad.R")
 
 # UI Definition
 ui <- dashboardPage(
   dashboardHeader(
-    title = "Analytics Dashboard",
+    title = "EV Data Analysis",
     dropdownMenu(type = "messages",
       messageItem(
         from = "System",
-        message = "Welcome to Analytics Dashboard",
+        message = "Welcome to EV Data Analysis Application",
         icon = icon("info")
       )
     ),
-    # dropdownMenu(type = "notifications", 
-    #   headerText = "Notifications",
-    #   icon = icon("bell"),
-    #   uiOutput("notificationItems")  # Changed to use dynamic UI output
-    # )
+    dropdownMenuOutput("taskProgressMenu"),  # Make sure this is before notificationMenu
     dropdownMenuOutput("notificationMenu")
   ),
   
   dashboardSidebar(
     sidebarMenu(
       menuItem("Data Source", tabName = "data", icon = icon("upload")),
-      menuItem("Analysis", tabName = "analysis", icon = icon("chart-bar")),
+      menuItem("Analysis & Visualization", tabName = "analysis", icon = icon("chart-bar")),
       menuItem("Task History", tabName = "tasks", icon = icon("history")),
       menuItem("Preferences", tabName = "prefs", icon = icon("cog")),
       tags$br(),
@@ -52,7 +69,19 @@ ui <- dashboardPage(
   dashboardBody(
     useShinyjs(),
     tags$head(
-      tags$script(src = "js/cookies.js")
+      tags$script(src = "js/cookies.js"),
+      tags$style(HTML("
+        .progress-description {
+          margin: 0;
+          padding: 0;
+          font-size: 12px;
+        }
+        .task-menu .progress {
+          margin: 0;
+          padding: 0;
+          height: 15px;
+        }
+      "))
     ),
     tabItems(
       # Data Upload Tab
@@ -95,35 +124,52 @@ ui <- dashboardPage(
       # Analysis Tab
       tabItem(tabName = "analysis",
         fluidRow(
-            column(width = 4,
-              box(
-                title = "Plot Controls",
-                width = 12,
-                selectInput("plotType", "Dimensionality Reduction: ",
-                            choices = c("PCA", "t-SNE", "UMAP")),
-                actionButton("runAnalysis", "Run Analysis", 
-                             class = "btn-primary",
-                             style = "margin-top: 25px;")
-              )
-            ),
-            column(width = 8,
-              box(
-                title = "Visualization",
-                width = 12,
-                plotOutput("plot"),
-                downloadButton("downloadPlot", "Download Plot", 
-                               class = "btn-success",
-                               style = "margin-top: 10px;")
-              ),
-              box(
-                title = "Analysis Results",
-                width = 12,
-                downloadButton("downloadText", "Download Text File", 
-                            class = "btn-info",
-                            style = "margin-bottom: 15px;"),  # Changed from margin-top to margin-bottom
-                verbatimTextOutput("analysisResults")
-                )
+          column(width = 4,
+            box(
+              title = "Plot Controls",
+              width = 12,
+              numericInput("sampling_ratio", 
+                          "Sampling Ratio:",
+                          value = 4,
+                          min = 1,
+                          max = 100,
+                          step = 0.5),
+              numericInput("min_proteins",
+                          "Minimum Proteins per EV:",
+                          value = 2,
+                          min = 1,
+                          max = 100,
+                          step = 1),
+              numericInput("min_count",
+                          "Minimum Count per Protein:",
+                          value = 2,
+                          min = 1,
+                          max = 100,
+                          step = 1),
+              actionButton("runAnalysis", "Run Analysis", 
+                          class = "btn-primary",
+                          style = "margin-top: 25px;")
             )
+          ),
+          column(width = 8,
+            box(
+              title = "Visualization",
+              width = 12,
+              plotOutput("plot"),
+              downloadButton("downloadPlot", "Download Plot", 
+                             class = "btn-success",
+                             style = "margin-top: 10px;")
+            ),
+            box(
+              title = "Analysis Results",
+              width = 12,
+              downloadButton("downloadText", "Download JSON File", 
+                          class = "btn-info",
+                          style = "margin-bottom: 15px;"),  # Changed from margin-top to margin-bottom
+              uiOutput("exploreResults"),
+              verbatimTextOutput("analysisResults")
+              )
+          )
         )
       ),
       
@@ -261,7 +307,8 @@ server <- function(input, output, session) {
           size = paste0(round(file_info$size / 1024, 2), " KB"),
           type = file_ext(file_info$name),
           date = format(Sys.time(), "%Y-%m-%d %H:%M:%S"),
-          data = data
+          data = data,
+          datapath = file_info$datapath
         )
         values$data_files[[file_info$name]] <- file_data
         
@@ -280,12 +327,6 @@ server <- function(input, output, session) {
       })
     }
     
-    # Update plot variable choices with columns from first valid file
-    if (length(values$data_files) > 0) {
-      first_file <- values$data_files[[1]]
-      updateSelectInput(session, "xvar", choices = names(first_file$data))
-      updateSelectInput(session, "yvar", choices = names(first_file$data))
-    }
   })
   
   # Display file list
@@ -345,14 +386,7 @@ server <- function(input, output, session) {
                            scrollY = "300px",
                            scrollCollapse = TRUE))
   })
-  
-  # Update plot data source to use selected file
-  output$plot <- renderPlot({
-    req(values$selected_file)
-    
-    
-  })
-  
+
   # Download handler for plot
   output$downloadPlot <- downloadHandler(
     filename = function() {
@@ -374,19 +408,28 @@ server <- function(input, output, session) {
   output$downloadText <- downloadHandler(
     filename = function() {
       # Generate filename with timestamp
-      paste("analysis-", format(Sys.time(), "%Y%m%d-%H%M%S"), ".txt", sep = "")
+      paste("analysis-", format(Sys.time(), "%Y%m%d-%H%M%S"), ".json", sep = "")
     },
     content = function(file) {
       # Check if we have text file results
-      if (!is.null(values$latest_results) && !is.null(values$latest_results$text_file)) {
+      if (!is.null(values$latest_results) && !is.null(values$latest_results$json)) {
         # Copy the content to the new file
-        writeLines(values$latest_results$text_file$content, file)
+        writeLines(values$latest_results$json$content, file)
       } else {
         # Write placeholder if no results available
         writeLines("No analysis results available", file)
       }
     }
   )
+
+  # Render explore results UI
+  output$exploreResults <- renderUI({
+    shiny::a(
+              h4(span(class = "fa fa-external-link", style = "margin-right: 5px;"),"Explore the tSNE result", class = "btn btn-primary action-button", style = "font-weight:600;"),
+              target = "_blank",
+              href = paste0("https://www.svatlas.org/evisualizer/index.html?DATAURL=https://ev.svatlas.org/output/analysis_", session_id(),".json")
+            )
+  })
   
   # Display task table with download buttons
   output$taskTable <- renderDT({
@@ -401,10 +444,10 @@ server <- function(input, output, session) {
           values$tasks$PlotFile[i]
         )
       }),
-      "Text File" = sapply(seq_len(nrow(values$tasks)), function(i) {
+      "JSON File" = sapply(seq_len(nrow(values$tasks)), function(i) {
         sprintf(
-          '<button onclick="Shiny.setInputValue(\'download_text\', \'%s\')" class="btn btn-info btn-sm">Download Text</button>',
-          values$tasks$TextFile[i]
+          '<button onclick="Shiny.setInputValue(\'download_text\', \'%s\')" class="btn btn-info btn-sm">Download JSON File</button>',
+          values$tasks$JSONFile[i]
         )
       }),
       stringsAsFactors = FALSE
@@ -434,7 +477,7 @@ server <- function(input, output, session) {
     req(input$download_text)
     filename <- basename(input$download_text)
     showModal(modalDialog(
-      title = "Download Text",
+      title = "Download JSON File",
       downloadButton("downloadTaskText", "Download"),
       easyClose = TRUE
     ))
@@ -459,78 +502,128 @@ server <- function(input, output, session) {
     }
   )
   
-  # Analysis button handler
+  # Initialize task progress as a reactive value
+  taskProgress <- reactiveVal(list(
+    active = FALSE,
+    step = "",
+    progress = 0
+  ))
+
+  # Update the menu output
+  output$taskProgressMenu <- renderMenu({
+    progress <- taskProgress()
+    print(paste("Task progress:", progress$step, "at", progress$progress * 100, "%"))
+    dropdownMenu(
+      type = "tasks",
+      badgeStatus = if(progress$active) "success" else NULL,
+      headerText = "Analysis Progress",
+      .list = if(progress$active) {
+        list(
+          taskItem(
+            value = progress$progress * 100,
+            color = "aqua",
+            text = progress$step
+          )
+        )
+      } else {
+        list()  # Empty list when not active
+      }
+    )
+  })
+
+  # Update the analysis handler progress updates
   observeEvent(input$runAnalysis, {
     if (length(values$data_files) == 0) {
-        showModal(modalDialog(
-            title = "Warning",
-            "Please upload at least one data file to Data Source before starting an analysis task.",
-            easyClose = TRUE,
-            footer = NULL
-        ))
+      showModal(modalDialog(
+        title = "Warning",
+        "Please upload at least one data file to Data Source before starting an analysis task.",
+        easyClose = TRUE,
+        footer = NULL
+      ))
       return()
     }
-    
-    # Show analysis in progress notification
-    showNotification("Running analysis...", 
-                    type = "message",
-                    duration = NULL,
-                    id = "analysis")
-    
-    # Run analysis and store results
-    values$latest_results <- evAnalysis(values$data_files)
-    
-    # Generate filenames for plot and text files
-    timestamp <- format(Sys.time(), "%Y%m%d-%H%M%S")
-    plot_file <- paste0("www/output/","plot-", timestamp, ".png")
-    text_file <- paste0("www/output/","analysis-", timestamp, ".txt")
-    
-    # Save the files
-    if(!is.null(values$latest_results$plot)) {
-      ggsave(plot_file, plot = values$latest_results$plot, width = 10, height = 7, dpi = 300)
+
+    # Check server load. if too high, dont run analysis; if medium, show warning
+    server_load <- getServerLoad()
+    message(sprintf("Current server load: %.2f", server_load))
+    if (server_load > 0.8) {
+      showModal(modalDialog(
+        title = "Server Load Warning",
+        "The server is currently under high load. Please try again later.",
+        easyClose = TRUE,
+        footer = NULL
+      ))
+      return()
     }
-    if(!is.null(values$latest_results$text_file)) {
-      writeLines(values$latest_results$text_file$content, text_file)
+
+    if (server_load > 0.5) {
+      showModal(modalDialog(
+        title = "Server Load Warning",
+        "The server is currently under high load. Analysis may take longer than usual.",
+        easyClose = TRUE,
+        footer = NULL
+      ))
     }
-    
-    # Add new task to history
-    new_task <- data.frame(
-      TaskTime = format(Sys.time(), "%Y-%m-%d %H:%M:%S"),
-      PlotFile = plot_file,  # Store full path
-      TextFile = text_file,  # Store full path
-      stringsAsFactors = FALSE
-    )
-    values$tasks <- rbind(new_task, values$tasks)
-    
-    # Update plot
-    if(!is.null(values$latest_results$plot)) {
-      output$plot <- renderPlot({
-        values$latest_results$plot
+
+    # Disable the runAnalysis button to prevent multiple clicks
+    shinyjs::disable("runAnalysis")
+
+    # Disable downloadText button during analysis
+    shinyjs::disable("downloadText")
+
+    # Run analysis with progress updates
+    evAnalysis(values$data_files, tempdir(), input$sampling_ratio, input$min_proteins, input$min_count) %>%
+      then(function(results) {
+        
+        # Generate filenames for plot and text files
+        timestamp <- format(Sys.time(), "%Y%m%d-%H%M%S")
+        plot_file <- file.path("www/output", paste0("plot-", timestamp, ".png"))
+        json_file <- file.path("www/output", paste0("analysis-", timestamp, ".json"))
+        last_json_file <- file.path("www/output", paste0("analysis-", session_id(), ".json"))
+        
+        # Save the files
+        if(!is.null(results$plot)) {
+          ggsave(plot_file, plot = results$plot, width = 10, height = 7, dpi = 300)
+        }
+        if(!is.null(results$json)) {
+          writeLines(results$json$content, json_file)
+          writeLines(results$json$content, last_json_file)
+        }
+        
+        # Add new task to history
+        new_task <- data.frame(
+          TaskTime = format(Sys.time(), "%Y-%m-%d %H:%M:%S"),
+          PlotFile = plot_file,
+          JSONFile = json_file,
+          LastJSONFile = last_json_file,
+          stringsAsFactors = FALSE
+        )
+        values$tasks <- rbind(new_task, values$tasks)
+        
+        # Store results
+        values$latest_results <- results
+        
+        # Update plot
+        output$plot <- renderPlot({
+          results$plot
+        })
+        
+        # Show completion notification
+        addNotification("Analysis completed successfully!", type = "message")
+      }) %>%
+      catch(function(error) {
+        message("Analysis failed:", error$message)
+        addNotification(
+          sprintf("Analysis failed: %s", error$message),
+          type = "error",
+          duration = 10
+        )
       })
-    }
-    
-    # Show results
-    output$analysisResults <- renderPrint({
-      cat("Analysis Results:\n")
-      cat("----------------\n\n")
-      
-      # Display text file content
-      if(!is.null(values$latest_results$text_file)) {
-        cat("Text File Content:\n")
-        cat("-----------------\n")
-        cat(values$latest_results$text_file$content, "\n\n")
-        cat("Text File Path:", values$latest_results$text_file$path, "\n\n")
-      }
-      
-      # Display other results
-      cat("Other Analysis Results:\n")
-      cat("---------------------\n")
-      print(str(values$latest_results[!names(values$latest_results) %in% c("plot", "text_file")]))
-    })
-    
-    # Remove the "in progress" notification and show completion
-    removeNotification("analysis")
-    addNotification("Analysis completed and task added to history!", type = "message")
+
+    # Re-enable the runAnalysis button
+    shinyjs::enable("runAnalysis")
+    # Re-enable downloadText button
+    shinyjs::enable("downloadText")
   })
   
   # Add handler for individual file deletion
@@ -546,15 +639,6 @@ server <- function(input, output, session) {
       type = "message"
     )
     
-    # Update plot variables if needed
-    if (length(values$data_files) > 0) {
-      first_file <- values$data_files[[1]]
-      updateSelectInput(session, "xvar", choices = names(first_file$data))
-      updateSelectInput(session, "yvar", choices = names(first_file$data))
-    } else {
-      updateSelectInput(session, "xvar", choices = "")
-      updateSelectInput(session, "yvar", choices = "")
-    }
   })
   
   # Add handler for removing all files
@@ -564,10 +648,7 @@ server <- function(input, output, session) {
     # Clear all files
     values$data_files <- list()
     values$selected_file <- NULL
-    
-    # Reset plot variables
-    updateSelectInput(session, "xvar", choices = "")
-    updateSelectInput(session, "yvar", choices = "")
+
     
     # Show notification
     showNotification("All files removed successfully", type = "message")
@@ -624,7 +705,7 @@ server <- function(input, output, session) {
   notifications <- reactiveVal(list())
 
   # Add notification function
-  addNotification <- function(message, type = "message", duration = NULL) {
+  addNotification <- function(message, type = "message", duration = 5) {
     # Show popup notification
     showNotification(message, type = type, duration = duration)
 
