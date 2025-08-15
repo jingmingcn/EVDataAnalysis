@@ -94,11 +94,13 @@ ui <- dashboardPage(
               tags$span(
                 style = "color: #f39c12;", # Warning color
                 icon("warning"),
-                "Each data file must be in CSV format with four columns named: ",
+                "Each data file must be in CSV format with five columns named: ",
                 tags$b("symbol"), ", ", 
                 tags$b("ev"), ", ",
-                tags$b("variable"), ", and ",
-                tags$b("value")
+                tags$b("variable"), ", ",
+                tags$b("value"),", and ",
+                tags$b("group"), ".",
+                "(Column names are case-sensitive.)",
               )
             ),
             fileInput("files", "Choose CSV Files",

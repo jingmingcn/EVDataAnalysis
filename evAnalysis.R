@@ -53,13 +53,13 @@ evAnalysis <- function(data_files, output_dir, sampling_ratio = 4, min_proteins 
         }
 
         # 验证Group列是否存在
-        if (!"Group" %in% colnames(all_long_data)) {
-          showNotification("Error: Group column not found in data. Please ensure your data contains a 'Group' column.", type = "error")
-          stop("Error: Group column not found in data. Please ensure your data contains a 'Group' column.")
+        if (!"group" %in% colnames(all_long_data)) {
+          showNotification("Error: 'group' column not found in data. Please ensure your data contains a 'group' column.", type = "error", duration = NULL)
+          stop("Error: Group column not found in data. Please ensure your data contains a 'group' column.")
         }        
-        group_summary <- table(all_long_data$Group)
+        group_summary <- table(all_long_data$group)
 
-        incProgress(2/10, detail = "Data loaded and preprocessing....")
+        incProgress(1/10, detail = "Data loaded and preprocessing....")
         # 第二步：数据转换和标准化
         if (nrow(all_long_data) > 0) {
           
@@ -73,14 +73,14 @@ evAnalysis <- function(data_files, output_dir, sampling_ratio = 4, min_proteins 
           
           original_protein_matrix <- mat_counts  
           sample_info <- all_long_data %>%
-            select(symbol, ev, Group) %>%  
+            select(symbol, ev, group) %>%  
             distinct() %>%
-            rename(sample = symbol, ev_id = ev, group = Group)
+            rename(sample = symbol, ev_id = ev, group = group)
           
           row_sums <- rowSums(mat_counts)
           valid_rows <- row_sums > 0
           if (sum(valid_rows) == 0) {
-            showNotification("Error: All EVs have zero counts after filtering!", type = "error")
+            showNotification("Error: All EVs have zero counts after filtering!", type = "error", duration = NULL)
             stop("Error: All EVs have zero counts!")
           }
           mat_counts_valid <- mat_counts[valid_rows, ]
@@ -94,7 +94,7 @@ evAnalysis <- function(data_files, output_dir, sampling_ratio = 4, min_proteins 
           valid_cols <- col_sds > 0 & !is.na(col_sds)
           
           if (sum(valid_cols) == 0) {
-            showNotification("Error: All proteins have zero variance after filtering!", type = "error")
+            showNotification("Error: All proteins have zero variance after filtering!", type = "error", duration = NULL)
             stop("Error: All proteins have zero variance!")
           }
           
@@ -107,9 +107,9 @@ evAnalysis <- function(data_files, output_dir, sampling_ratio = 4, min_proteins 
           }
           
           # 第三步：主成分分析(PCA)
-          incProgress(3/10, detail = "Performing PCA...")
+          incProgress(1/10, detail = "Performing PCA...")
           if (nrow(cpm_scaled) < 2 || ncol(cpm_scaled) < 2) {
-            showNotification("Error: Insufficient data for PCA!", type = "error")
+            showNotification("Error: Insufficient data for PCA!", type = "error", duration = NULL)
             stop("Error: Insufficient data for PCA")
           }
           
@@ -132,12 +132,12 @@ evAnalysis <- function(data_files, output_dir, sampling_ratio = 4, min_proteins 
           write.csv(original_protein_matrix, file = file.path(output_dir, "original_protein_matrix.csv"), row.names = TRUE)
             
         } else {
-          showNotification("Error: No valid data found after preprocessing!", type = "error")
+          showNotification("Error: No valid data found after preprocessing!", type = "error", duration = NULL)
           stop("Error: No valid data found!")
         }
 
         # 第四步：FlowSOM聚类分析
-        incProgress(4/10, detail = "Clustering with FlowSOM...")
+        incProgress(1/10, detail = "Clustering with FlowSOM...")
         pca_data <- read.csv(file.path(output_dir, "flowsom_input_data.csv"), row.names = 1)
         data <- as.matrix(pca_data)
 
@@ -157,7 +157,7 @@ evAnalysis <- function(data_files, output_dir, sampling_ratio = 4, min_proteins 
         fSOM <- BuildSOM(fSOM, xdim = 10, ydim = 10)
 
         # 第五步：Meta-clustering和最佳聚类数选择
-        incProgress(5/10, detail = "Meta-clustering and determining optimal clusters...")
+        incProgress(1/10, detail = "Meta-clustering and determining optimal clusters...")
         code <- fSOM$map$codes
         rownames(code) <- 1:nrow(code)
         results <- ConsensusClusterPlus(
@@ -195,7 +195,7 @@ evAnalysis <- function(data_files, output_dir, sampling_ratio = 4, min_proteins 
         message("Clustering completed with ", cluster_n, " clusters")
 
         # 第六步：t-SNE可视化
-        incProgress(6/10, detail = "Performing t-SNE for visualization...")
+        incProgress(1/10, detail = "Performing t-SNE for visualization...")
         perplexity <- as.integer(nrow(data)/450)
         perplexity <- max(45, min(perplexity, 440))
 
@@ -259,7 +259,7 @@ evAnalysis <- function(data_files, output_dir, sampling_ratio = 4, min_proteins 
         message("t-SNE plot saved to output directory.")
 
         # 第七步：生成JSON报告
-        incProgress(7/10, detail = "Generating JSON report...")
+        incProgress(1/10, detail = "Generating JSON report...")
         original_matrix <- read.csv(file.path(output_dir, "original_protein_matrix.csv"),
                             row.names = 1, stringsAsFactors = FALSE)
         sample_info <- read.csv(file.path(output_dir, "sample_metadata.csv"), stringsAsFactors = FALSE)
@@ -269,7 +269,7 @@ evAnalysis <- function(data_files, output_dir, sampling_ratio = 4, min_proteins 
         symbol_names <- ev_to_symbol[ev_ids]
         group_names <- ev_to_group[ev_ids]
 
-        incProgress(8/10, detail = "Preparing data files for eVisualizer...")
+        incProgress(1/10, detail = "Preparing data files for eVisualizer...")
         #  1. 生成 samplesheet.csv 
         samplesheet <- data.frame(
           Sample_Name = symbol_names,
@@ -340,7 +340,7 @@ evAnalysis <- function(data_files, output_dir, sampling_ratio = 4, min_proteins 
         message("Panel data saved.")
 
         # 执行JSON生成
-        incProgress(9/10, detail = "Generating JSON report...")
+        incProgress(1/10, detail = "Generating JSON report...")
         json_data <- generate_evisualizer_json(
           output_dir = output_dir,
           report_name = "ARZ Human Protein Analysis",
