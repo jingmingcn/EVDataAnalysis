@@ -12,12 +12,13 @@ evAnalysis <- function(data_files, output_dir, sampling_ratio = 4, min_proteins 
 
         # 第一步：数据读取和预处理
         all_long_data <- data.frame()
-
+        n <- length(data_files)
+        incProgress(1/10, detail = "Loading and preprocessing data...")
         for (data_file in data_files) {
           file_path <- data_file$datapath
           sample_name <- tools::file_path_sans_ext(basename(file_path))
           message("Processing: ", sample_name)
-          incProgress(1/10, detail = paste("Processing: ", sample_name))
+          incProgress(1/10/n, detail = paste("Processing: ", sample_name))
           
           dt <- fread(file_path)
           message("Data columns: ", paste(colnames(dt), collapse = ", "))
