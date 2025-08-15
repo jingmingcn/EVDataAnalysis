@@ -427,7 +427,7 @@ server <- function(input, output, session) {
     shiny::a(
               h4(span(class = "fa fa-external-link", style = "margin-right: 5px;"),"Explore the tSNE result", class = "btn btn-primary action-button", style = "font-weight:600;"),
               target = "_blank",
-              href = paste0("https://www.svatlas.org/evisualizer/index.html?DATAURL=https://ev.svatlas.org/output/analysis_", session_id(),".json")
+              href = paste0("https://www.svatlas.org/evisualizer/index.html?DATAURL=proxy.php?url=https://ev.svatlas.org/output/analysis-", session_id(),".json")
             )
   })
   

@@ -4,7 +4,7 @@ evAnalysis <- function(data_files, output_dir, sampling_ratio = 4, min_proteins 
   promises::promise(function(resolve, reject) {
 
     # Create progress handler
-    withProgress(message = 'Analysis in progress', detail = 'Starting...', value = 0, {
+    withProgress(message = 'Analysis in progress', detail = 'Starting...! This might take a moment...!', value = 0, {
     
       tryCatch({
         # Initialize results list
@@ -17,6 +17,7 @@ evAnalysis <- function(data_files, output_dir, sampling_ratio = 4, min_proteins 
           file_path <- data_file$datapath
           sample_name <- tools::file_path_sans_ext(basename(file_path))
           message("Processing: ", sample_name)
+          incProgress(1/10, detail = paste("Processing: ", sample_name))
           
           dt <- fread(file_path)
           message("Data columns: ", paste(colnames(dt), collapse = ", "))
@@ -51,24 +52,14 @@ evAnalysis <- function(data_files, output_dir, sampling_ratio = 4, min_proteins 
           all_long_data <- rbind(all_long_data, dt_sampled)
         }
 
-        ########### 添加Group列，按样本随机分配AD和CT
-        unique_samples <- unique(all_long_data$symbol)
-        n_samples <- length(unique_samples)
-        set.seed(123)  
-        sample_groups <- sample(c("AD", "CT"), size = n_samples, replace = TRUE)
-        sample_to_group <- setNames(sample_groups, unique_samples)
-        all_long_data$Group <- sample_to_group[all_long_data$symbol]
-        group_summary <- table(sample_to_group)
-        verification <- all_long_data %>%
-          group_by(symbol) %>%
-          summarise(unique_groups = length(unique(Group)), .groups = "drop")
-        sample_group_df <- data.frame(
-          Sample = names(sample_to_group),
-          Group = sample_to_group,
-          stringsAsFactors = FALSE
-        )
-        
+        # 验证Group列是否存在
+        if (!"Group" %in% colnames(all_long_data)) {
+          showNotification("Error: Group column not found in data. Please ensure your data contains a 'Group' column.", type = "error")
+          stop("Error: Group column not found in data. Please ensure your data contains a 'Group' column.")
+        }        
+        group_summary <- table(all_long_data$Group)
 
+        incProgress(2/10, detail = "Data loaded and preprocessing....")
         # 第二步：数据转换和标准化
         if (nrow(all_long_data) > 0) {
           
@@ -80,34 +71,20 @@ evAnalysis <- function(data_files, output_dir, sampling_ratio = 4, min_proteins 
           mat_counts <- as.matrix(mat_wide[, -1])
           rownames(mat_counts) <- ev_ids
           
-          # 添加Group列
           original_protein_matrix <- mat_counts  
           sample_info <- all_long_data %>%
             select(symbol, ev, Group) %>%  
             distinct() %>%
             rename(sample = symbol, ev_id = ev, group = Group)
+          
           row_sums <- rowSums(mat_counts)
           valid_rows <- row_sums > 0
           if (sum(valid_rows) == 0) {
+            showNotification("Error: All EVs have zero counts after filtering!", type = "error")
             stop("Error: All EVs have zero counts!")
           }
           mat_counts_valid <- mat_counts[valid_rows, ]
           sample_info_valid <- sample_info[sample_info$ev_id %in% rownames(mat_counts_valid), ]
-
-          #### 没有Group列时这样运行
-          # original_protein_matrix <- mat_counts
-          # sample_info <- all_long_data %>%
-          #   select(symbol, ev) %>%
-          #   distinct() %>%
-          #   rename(sample = symbol, ev_id = ev)
-          # row_sums <- rowSums(mat_counts)
-          # valid_rows <- row_sums > 0
-          # if (sum(valid_rows) == 0) {
-          #   stop("Error: All EVs have zero counts!")
-          # }
-          # mat_counts_valid <- mat_counts[valid_rows, ]
-          # sample_info_valid <- sample_info[sample_info$ev_id %in% rownames(mat_counts_valid), ]
-          
           
           # CPM标准化: (count / total_count) * 10^4
           cpm_data <- sweep(mat_counts_valid, 1, rowSums(mat_counts_valid), FUN = "/") * 1e4
@@ -117,6 +94,7 @@ evAnalysis <- function(data_files, output_dir, sampling_ratio = 4, min_proteins 
           valid_cols <- col_sds > 0 & !is.na(col_sds)
           
           if (sum(valid_cols) == 0) {
+            showNotification("Error: All proteins have zero variance after filtering!", type = "error")
             stop("Error: All proteins have zero variance!")
           }
           
@@ -129,8 +107,9 @@ evAnalysis <- function(data_files, output_dir, sampling_ratio = 4, min_proteins 
           }
           
           # 第三步：主成分分析(PCA)
-          
+          incProgress(3/10, detail = "Performing PCA...")
           if (nrow(cpm_scaled) < 2 || ncol(cpm_scaled) < 2) {
+            showNotification("Error: Insufficient data for PCA!", type = "error")
             stop("Error: Insufficient data for PCA")
           }
           
@@ -153,10 +132,12 @@ evAnalysis <- function(data_files, output_dir, sampling_ratio = 4, min_proteins 
           write.csv(original_protein_matrix, file = file.path(output_dir, "original_protein_matrix.csv"), row.names = TRUE)
             
         } else {
+          showNotification("Error: No valid data found after preprocessing!", type = "error")
           stop("Error: No valid data found!")
         }
 
         # 第四步：FlowSOM聚类分析
+        incProgress(4/10, detail = "Clustering with FlowSOM...")
         pca_data <- read.csv(file.path(output_dir, "flowsom_input_data.csv"), row.names = 1)
         data <- as.matrix(pca_data)
 
@@ -176,6 +157,7 @@ evAnalysis <- function(data_files, output_dir, sampling_ratio = 4, min_proteins 
         fSOM <- BuildSOM(fSOM, xdim = 10, ydim = 10)
 
         # 第五步：Meta-clustering和最佳聚类数选择
+        incProgress(5/10, detail = "Meta-clustering and determining optimal clusters...")
         code <- fSOM$map$codes
         rownames(code) <- 1:nrow(code)
         results <- ConsensusClusterPlus(
@@ -184,7 +166,7 @@ evAnalysis <- function(data_files, output_dir, sampling_ratio = 4, min_proteins 
           seed = 42,
           verbose = FALSE,
           writeTable = FALSE,
-          plot = "png"
+          plot = FALSE
         )
         PAC <- rep(0, 70)
         for(i in 2:70){
@@ -212,8 +194,8 @@ evAnalysis <- function(data_files, output_dir, sampling_ratio = 4, min_proteins 
         cluster_percentages <- table(ev_clusters) / length(ev_clusters) * 100
         message("Clustering completed with ", cluster_n, " clusters")
 
-
         # 第六步：t-SNE可视化
+        incProgress(6/10, detail = "Performing t-SNE for visualization...")
         perplexity <- as.integer(nrow(data)/450)
         perplexity <- max(45, min(perplexity, 440))
 
@@ -241,7 +223,6 @@ evAnalysis <- function(data_files, output_dir, sampling_ratio = 4, min_proteins 
           stringsAsFactors = FALSE
         )
         message("t-SNE results prepared for visualization.")
-        # saveRDS(tsne_out, file = file.path(output_dir, "tsne_result.rds"))
 
         cluster_stats <- clustering_results %>%
           group_by(Meta_Cluster) %>%
@@ -277,8 +258,8 @@ evAnalysis <- function(data_files, output_dir, sampling_ratio = 4, min_proteins 
 
         message("t-SNE plot saved to output directory.")
 
-
         # 第七步：生成JSON报告
+        incProgress(7/10, detail = "Generating JSON report...")
         original_matrix <- read.csv(file.path(output_dir, "original_protein_matrix.csv"),
                             row.names = 1, stringsAsFactors = FALSE)
         sample_info <- read.csv(file.path(output_dir, "sample_metadata.csv"), stringsAsFactors = FALSE)
@@ -288,6 +269,7 @@ evAnalysis <- function(data_files, output_dir, sampling_ratio = 4, min_proteins 
         symbol_names <- ev_to_symbol[ev_ids]
         group_names <- ev_to_group[ev_ids]
 
+        incProgress(8/10, detail = "Preparing data files for eVisualizer...")
         #  1. 生成 samplesheet.csv 
         samplesheet <- data.frame(
           Sample_Name = symbol_names,
@@ -311,8 +293,6 @@ evAnalysis <- function(data_files, output_dir, sampling_ratio = 4, min_proteins 
         message("EV protein data saved.")
 
         #  3. 生成 tsne.csv 
-        # tsne_out <- readRDS(file.path(output_dir, "tsne_result.rds"))
-
         tsne_coords <- tsne_out$Y
         colnames(tsne_coords) <- c("X1", "X2")
         cluster_table <- table(ev_clusters)
@@ -360,14 +340,13 @@ evAnalysis <- function(data_files, output_dir, sampling_ratio = 4, min_proteins 
         message("Panel data saved.")
 
         # 执行JSON生成
+        incProgress(9/10, detail = "Generating JSON report...")
         json_data <- generate_evisualizer_json(
           output_dir = output_dir,
           report_name = "ARZ Human Protein Analysis",
           orderer_name = "researcher"
         )
         message("JSON report generated.")
-        
-        # Add plot to results
         
         return_results$json <- list(
           content = json_data,
