@@ -14,8 +14,6 @@ packages <- c("shiny",
 "tidyr",
 "stringr",
 "Matrix",
-"FlowSOM",
-"flowCore",
 "ConsensusClusterPlus",
 "Rtsne",
 "umap",
@@ -26,6 +24,16 @@ packages <- c("shiny",
 "data.table")
 install.packages(packages)
 
+install.packages('remotes')
+remotes::install_github('RGLab/cytolib')
+
 if (!requireNamespace("BiocManager", quietly = TRUE))
     install.packages("BiocManager")
+
+BiocManager::install("flowCore")
 BiocManager::install("FlowSOM")
+
+
+# sudo apt install libprotobuf-dev, libboost-dev 
+#         sudo apt-get install libfontconfig1-dev
+# sudo apt-get install libxml2-dev
