@@ -14,8 +14,10 @@ if (!requireNamespace("BiocManager", quietly = TRUE))
 
 BiocManager::install("flowCore")
 BiocManager::install("FlowSOM")
+BiocManager::install("ConsensusClusterPlus")
+BiocManager::install("Biobase")
 
-install.packages(c("shiny", "shinydashboard", "DT", "ggplot2", "dplyr", "tools", "jsonlite", "shinyjs", "cookies", "promises", "future", "progressr", "data.table", "tidyr", "stringr", "Matrix", "ConsensusClusterPlus", "Rtsne", "umap", "RColorBrewer", "Biobase", "reshape2", "uuid"))
+install.packages(c("shiny", "shinydashboard", "DT", "ggplot2", "dplyr", "tools", "jsonlite", "shinyjs", "cookies", "promises", "future", "progressr", "data.table", "tidyr", "stringr", "Matrix",  "Rtsne", "umap", "RColorBrewer", "reshape2", "uuid"))
 ```
 
 ## How to Run Locally
